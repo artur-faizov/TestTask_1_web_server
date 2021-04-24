@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"sync/atomic"
+	"time"
 )
 
 
@@ -26,12 +27,22 @@ type HistoryElement struct {
 	Respond Respond
 }
 
+type HistoryElementInArray struct {
+	ID int32 //key of element in map storage
+	Time string //time when added in DB
+}
+
+func RemoveIndex(s []HistoryElementInArray, index int) []HistoryElementInArray {
+	return append(s[:index], s[index+1:]...)
+}
+
 
 func main() {
 
 	var lastID int32
 
 	History := make(map[int32]HistoryElement)
+	History_array := make([]HistoryElementInArray, 0)
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request){
 
@@ -39,13 +50,24 @@ func main() {
 		if r.Method == "DELETE" {
 			fmt.Println("Delete operation requested")
 			deleteID_string := r.URL.Query().Get("id")
-			deleteID_int32, err3 := strconv.ParseInt(deleteID_string, 10, 32)
+			deleteID_int64, err3 := strconv.ParseInt(deleteID_string, 10, 32)
 			if err3 != nil {
 				http.Error(w, err3.Error(), http.StatusBadRequest)
 				return
 			}
+
 			//fmt.Println(deleteID_int32)
-			delete(History, int32(deleteID_int32));
+			deleteID_int32 := int32(deleteID_int64)
+			delete(History, deleteID_int32)
+
+			for index, element := range History_array {
+				if element.ID == deleteID_int32{
+					History_array = RemoveIndex(History_array, index)
+					fmt.Println("removed ID from index array: ", index)
+					fmt.Print("Current Index array is: ", History_array)
+					break
+				}
+			}
 
 
 
@@ -93,12 +115,19 @@ func main() {
 			helement.Request = reqParams
 			helement.Respond = res
 
-			History[lastID] = helement
-			//Maybe need mutex here
-			//lastID++
-			atomic.AddInt32(&lastID, 1)
-			fmt.Println("Element added with ID: ", lastID-1)
+			x := atomic.AddInt32(&lastID, 1)
+			History[x] = helement
+
+			var his_arr_elem HistoryElementInArray
+			his_arr_elem.ID = x
+			his_arr_elem.Time = time.Now().Format("2006-01-02 15:04:05.000")
+			//fmt.Print(his_arr_elem.Time, "\n")
+			History_array = append(History_array, his_arr_elem)
+			fmt.Print(History_array, "\n")
+
+			fmt.Println("Element added with ID: ", x)
 			fmt.Println("Map length: ", len(History))
+
 
 
 			//fmt.Print(res)
@@ -109,6 +138,7 @@ func main() {
 	})
 
 	http.HandleFunc("/history", func(w http.ResponseWriter, r *http.Request){
+		//?limit=50&offset=0
 		for key, element := range History {
 			fmt.Println("Map key: ", key,": Request: ", element.Request.Method, " ", element.Request.Url)
 		}
