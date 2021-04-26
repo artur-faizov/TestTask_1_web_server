@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"strconv"
@@ -18,9 +19,9 @@ type Request struct {
 }
 
 type Respond struct {
-	HttpStatus  string
-	Header http.Header
-	RespLen int64
+	HttpStatus    string
+	Header        http.Header
+	ContentLength int
 }
 
 type HistoryElement struct {
@@ -33,10 +34,11 @@ type HistoryIndexElement struct {
 	Time string //time when added in DB
 	Status string // tag if removed from history
 }
-
+/*
 func RemoveIndex(s []HistoryIndexElement, index int) []HistoryIndexElement {
 	return append(s[:index], s[index+1:]...)
 }
+ */
 
 
 func main() {
@@ -62,7 +64,7 @@ func main() {
 			deleteIdInt32 := int32(deleteIdInt64)
 			delete(History, deleteIdInt32)
 
-			// can improve speed here based on "half divide method if use Time of recording as a refence"
+			// can improve speed here based on "half divide method if use Time of recording as a reference"
 
 			for index, element := range HistoryIndex {
 				if element.ID == deleteIdInt32 {
@@ -88,18 +90,63 @@ func main() {
 
 			switch reqParams.Method{
 			case "GET":
-				var err error
 				resp, err = http.Get(reqParams.Url)
 				if err != nil {
-					log.Fatalln(err)
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
 				}
-				defer resp.Body.Close()
+				defer func() {
+					err := resp.Body.Close()
+					if err != nil {
+						log.Fatal(err)
+					}
+				}()
+			case "HEAD":
+				resp, err = http.Head(reqParams.Url)
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+				defer func() {
+					err := resp.Body.Close()
+					if err != nil {
+						log.Fatal(err)
+					}
+				}()
+				/* Under development POST request
+			case "POST":
+				resp, err = http.Head(reqParams.Url)
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+				defer func() {
+					err := resp.Body.Close()
+					if err != nil {
+						log.Fatal(err)
+					}
+				}()
+				 */
+			default:
+				_,err = w.Write([]byte("unknown request type"))
+				if err != nil {
+					log.Println(err)
+				}
+				return
 			}
 
+			//Counting ContentLength
+			body, err := ioutil.ReadAll(resp.Body)
+			if err != nil {
+				log.Println(err)
+			}
+			ContentLength := len(body)
+
+
 			res := Respond{
-				HttpStatus : resp.Status,
-				Header : resp.Header,
-				RespLen : resp.ContentLength,
+				HttpStatus :   resp.Status,
+				Header :       resp.Header,
+				ContentLength: ContentLength,
 			}
 
 			historyElement := HistoryElement{
@@ -115,16 +162,21 @@ func main() {
 			var IndexElem HistoryIndexElement
 			IndexElem.ID = x
 			IndexElem.Time = time.Now().Format("2006-01-02 15:04:05.000")
-			//fmt.Print(his_arr_elem.Time, "\n")
 			HistoryIndex = append(HistoryIndex, IndexElem)
 			//fmt.Print(HistoryIndex, "\n")
 			//fmt.Println("Element added with ID: ", x)
 			//fmt.Println("Map length: ", len(History))
 
-			//fmt.Print(res)
-			//w.Write()
+			resJsonNice, err := json.MarshalIndent(res, "", "\t")
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+			}
+			_, err = w.Write(resJsonNice)
+			if err != nil {
+				log.Println(err)
+			}
 		}
-		
+
 
 	})
 
@@ -180,17 +232,7 @@ func main() {
 
 		}
 
-		/*
-		for key, element := range History {
-			fmt.Println("Map key: ", key,": Request: ", element.Request.Method, " ", element.Request.Url)
-		}
-		/*
-		jsonHistory, err := json.Marshal(History)
-		if err != nil {
-			log.Fatalln(err)
-		}
 
-		 */
 		jsonHistoryNice, err := json.MarshalIndent(historyRange, "", "\t")
 		if err != nil {
 			log.Fatalln(err)
@@ -200,7 +242,10 @@ func main() {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		w.Write(jsonHistoryNice)
+		_,err = w.Write(jsonHistoryNice)
+		if err != nil {
+			log.Println(err)
+		}
 	})
 
 	http.HandleFunc("/index", func(w http.ResponseWriter, r *http.Request){
@@ -212,7 +257,10 @@ func main() {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		w.Write(jsonHistoryIndex)
+		_,err = w.Write(jsonHistoryIndex)
+		if err != nil {
+			log.Println(err)
+		}
 	})
 
 
