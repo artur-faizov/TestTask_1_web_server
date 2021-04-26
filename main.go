@@ -124,17 +124,7 @@ func main() {
 			//fmt.Print(res)
 			//w.Write()
 		}
-
-		//fmt.Println(r.Method)
-		if r.Method == "DELETE" {
-
-
-
-		} else if r.Method == "POST"{
-
-		}
-
-		//test line
+		
 
 	})
 
