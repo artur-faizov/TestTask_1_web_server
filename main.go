@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 )
@@ -27,12 +28,13 @@ type HistoryElement struct {
 	Respond Respond
 }
 
-type HistoryElementInArray struct {
+type HistoryIndexElement struct {
 	ID int32 //key of element in map storage
 	Time string //time when added in DB
+	Status string // tag if removed from history
 }
 
-func RemoveIndex(s []HistoryElementInArray, index int) []HistoryElementInArray {
+func RemoveIndex(s []HistoryIndexElement, index int) []HistoryIndexElement {
 	return append(s[:index], s[index+1:]...)
 }
 
@@ -42,103 +44,153 @@ func main() {
 	var lastID int32
 
 	History := make(map[int32]HistoryElement)
-	History_array := make([]HistoryElementInArray, 0)
+	HistoryIndex := make([]HistoryIndexElement, 0)
+
+
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request){
 
-		fmt.Println(r.Method)
-		if r.Method == "DELETE" {
+		switch r.Method{
+		case "DELETE":
 			fmt.Println("Delete operation requested")
-			deleteID_string := r.URL.Query().Get("id")
-			deleteID_int64, err3 := strconv.ParseInt(deleteID_string, 10, 32)
-			if err3 != nil {
-				http.Error(w, err3.Error(), http.StatusBadRequest)
+			deleteIdString := r.URL.Query().Get("id")
+			deleteIdInt64, err := strconv.ParseInt(deleteIdString, 10, 32)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
+			deleteIdInt32 := int32(deleteIdInt64)
+			delete(History, deleteIdInt32)
 
-			//fmt.Println(deleteID_int32)
-			deleteID_int32 := int32(deleteID_int64)
-			delete(History, deleteID_int32)
+			// can improve speed here based on "half divide method if use Time of recording as a refence"
 
-			for index, element := range History_array {
-				if element.ID == deleteID_int32{
-					History_array = RemoveIndex(History_array, index)
+			for index, element := range HistoryIndex {
+				if element.ID == deleteIdInt32 {
+					HistoryIndex[index].Status = "DELETED: " + time.Now().Format("2006-01-02 15:04:05.000")
+					//HistoryIndex = RemoveIndex(HistoryIndex, index)
 					fmt.Println("removed ID from index array: ", index)
-					fmt.Print("Current Index array is: ", History_array)
+					fmt.Print("Current Index array is: ", HistoryIndex)
 					break
 				}
 			}
-
-
-
-		} else if r.Method == "POST"{
-			reqParams := Request{}
-			err1 := json.NewDecoder(r.Body).Decode(&reqParams)
-			if err1 != nil {
-				http.Error(w, err1.Error(), http.StatusBadRequest)
+		case "POST":
+			reqParams := Request{} //initiate an object to store POST JSON data
+			err := json.NewDecoder(r.Body).Decode(&reqParams)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
-			//Print details about request to do
-			fmt.Printf( "Req Params: %+v\n", reqParams)
+			//Log details about request to do
+			log.Printf( "Got Request: method: %s url: %s\n", reqParams.Method, reqParams.Url)
 
-			//Json to text
-			/*
-				reqParamsString, err2 := json.Marshal(reqParams)
-				if err2 != nil {
-					http.Error(w, err2.Error(), http.StatusBadRequest)
-					return
+			//Executing request to 3rd party service
+			var resp *http.Response
+
+			switch reqParams.Method{
+			case "GET":
+				var err error
+				resp, err = http.Get(reqParams.Url)
+				if err != nil {
+					log.Fatalln(err)
 				}
-
-				//w.Write(reqParamsString)
-				fmt.Print("Req Params: ", reqParamsString, "\n")
-			*/
-			resp, err2 := http.Get(reqParams.Url)
-			if err2 != nil {
-				log.Fatalln(err2)
+				defer resp.Body.Close()
 			}
-			defer resp.Body.Close()
 
-			var res Respond
-			res.HttpStatus = resp.Status
-			res.Header = resp.Header
-			res.RespLen = resp.ContentLength
-			//fmt.Print("ResLength: ", res.RespLen, "\n")
-			// length always -1
-			// https://stackoverflow.com/questions/49112440/unexpected-http-net-response-content-length-in-golang
-			/*
-				for key, element := range res.Header {
-					fmt.Println("Header Name: ", key,": ", element)
-				}
-			*/
+			res := Respond{
+				HttpStatus : resp.Status,
+				Header : resp.Header,
+				RespLen : resp.ContentLength,
+			}
 
-			var helement HistoryElement
-			helement.Request = reqParams
-			helement.Respond = res
+			historyElement := HistoryElement{
+				Request : reqParams,
+				Respond : res,
+			}
 
+			// add request result to History of requests
 			x := atomic.AddInt32(&lastID, 1)
-			History[x] = helement
+			History[x] = historyElement
 
-			var his_arr_elem HistoryElementInArray
-			his_arr_elem.ID = x
-			his_arr_elem.Time = time.Now().Format("2006-01-02 15:04:05.000")
+			// add request to History Index
+			var IndexElem HistoryIndexElement
+			IndexElem.ID = x
+			IndexElem.Time = time.Now().Format("2006-01-02 15:04:05.000")
 			//fmt.Print(his_arr_elem.Time, "\n")
-			History_array = append(History_array, his_arr_elem)
-			fmt.Print(History_array, "\n")
-
-			fmt.Println("Element added with ID: ", x)
-			fmt.Println("Map length: ", len(History))
-
-
+			HistoryIndex = append(HistoryIndex, IndexElem)
+			//fmt.Print(HistoryIndex, "\n")
+			//fmt.Println("Element added with ID: ", x)
+			//fmt.Println("Map length: ", len(History))
 
 			//fmt.Print(res)
 			//w.Write()
 		}
 
+		//fmt.Println(r.Method)
+		if r.Method == "DELETE" {
+
+
+
+		} else if r.Method == "POST"{
+
+		}
+
+		//test line
 
 	})
 
 	http.HandleFunc("/history", func(w http.ResponseWriter, r *http.Request){
 		//?limit=50&offset=0
+
+		//keys, ok := r.URL.Query()["key"]
+		//fmt.Print(r.URL.Query(), "\n")
+		limit := 0
+		offset := 0
+
+		if r.URL.Query()["limit"] != nil {
+			l, err := strconv.Atoi(r.URL.Query()["limit"][0])
+				if err != nil {log.Fatalln(err)}
+			if l < len(HistoryIndex){
+				limit = l
+			} else {
+				limit = len(HistoryIndex)
+			}
+			//fmt.Println(limit)
+		} else {
+			limit = len(HistoryIndex)
+		}
+
+		if r.URL.Query()["offset"] != nil {
+			o, err := strconv.Atoi(r.URL.Query()["offset"][0])
+				if err != nil {log.Fatalln(err)}
+			offset = o
+			fmt.Println(offset)
+		}
+
+		if  offset > len(HistoryIndex){
+			offset = len(HistoryIndex)
+		}
+
+		type historyRangeElement struct{
+			ID string
+			Element HistoryElement
+		}
+		historyRange := make([]historyRangeElement,0)
+
+		for i:=offset; i< limit; i++{
+			if  !strings.Contains(HistoryIndex[i].Status, "DELETED") {
+				var element historyRangeElement
+				element.ID = strconv.Itoa(int(HistoryIndex[i].ID))
+				element.Element = History[HistoryIndex[i].ID]
+				historyRange = append(historyRange, element)
+			} else {
+				var element historyRangeElement
+				element.ID = HistoryIndex[i].Status
+				historyRange = append(historyRange, element)
+			}
+
+		}
+
+		/*
 		for key, element := range History {
 			fmt.Println("Map key: ", key,": Request: ", element.Request.Method, " ", element.Request.Url)
 		}
@@ -149,9 +201,9 @@ func main() {
 		}
 
 		 */
-		jsonHistoryNice, err2 := json.MarshalIndent(History, "", "\t")
-		if err2 != nil {
-			log.Fatalln(err2)
+		jsonHistoryNice, err := json.MarshalIndent(historyRange, "", "\t")
+		if err != nil {
+			log.Fatalln(err)
 		}
 		//fmt.Print(string(jsonHistory))
 		//fmt.Print(string(jsonHistoryNice))
@@ -161,6 +213,17 @@ func main() {
 		w.Write(jsonHistoryNice)
 	})
 
+	http.HandleFunc("/index", func(w http.ResponseWriter, r *http.Request){
+
+		jsonHistoryIndex, err := json.MarshalIndent(HistoryIndex, "", "\t")
+		if err != nil {
+			log.Fatalln(err)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		w.Write(jsonHistoryIndex)
+	})
 
 
 	fmt.Printf("Starting server at port 8080\n")
