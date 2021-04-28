@@ -2,12 +2,12 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -48,30 +48,35 @@ func main() {
 	History := make(map[int32]HistoryElement)
 	HistoryIndex := make([]HistoryIndexElement, 0)
 
-
+	mux := &sync.RWMutex{}
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request){
 
 		switch r.Method{
 		case "DELETE":
-			fmt.Println("Delete operation requested")
 			deleteIdString := r.URL.Query().Get("id")
+			log.Println("Delete operation requested for ID: ", deleteIdString)
 			deleteIdInt64, err := strconv.ParseInt(deleteIdString, 10, 32)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
 			deleteIdInt32 := int32(deleteIdInt64)
+
+			mux.Lock()
 			delete(History, deleteIdInt32)
+			mux.Unlock()
+
 
 			// can improve speed here based on "half divide method if use Time of recording as a reference"
 
 			for index, element := range HistoryIndex {
 				if element.ID == deleteIdInt32 {
+					mux.Lock()
 					HistoryIndex[index].Status = "DELETED: " + time.Now().Format("2006-01-02 15:04:05.000")
+					mux.Unlock()
 					//HistoryIndex = RemoveIndex(HistoryIndex, index)
-					fmt.Println("removed ID from index array: ", index)
-					fmt.Print("Current Index array is: ", HistoryIndex)
+					//log.Print("Current Index array is: ", HistoryIndex)
 					break
 				}
 			}
@@ -156,16 +161,20 @@ func main() {
 
 			// add request result to History of requests
 			x := atomic.AddInt32(&lastID, 1)
+			mux.Lock()
 			History[x] = historyElement
+			mux.Unlock()
 
 			// add request to History Index
 			var IndexElem HistoryIndexElement
 			IndexElem.ID = x
 			IndexElem.Time = time.Now().Format("2006-01-02 15:04:05.000")
+			mux.Lock()
 			HistoryIndex = append(HistoryIndex, IndexElem)
-			//fmt.Print(HistoryIndex, "\n")
-			//fmt.Println("Element added with ID: ", x)
-			//fmt.Println("Map length: ", len(History))
+			mux.Unlock()
+			//log.Print(HistoryIndex, "\n")
+			//log.Println("Element added with ID: ", x)
+			//log.Println("Map length: ", len(History))
 
 			resJsonNice, err := json.MarshalIndent(res, "", "\t")
 			if err != nil {
@@ -184,10 +193,11 @@ func main() {
 		//?limit=50&offset=0
 
 		//keys, ok := r.URL.Query()["key"]
-		//fmt.Print(r.URL.Query(), "\n")
+		//log.Print(r.URL.Query(), "\n")
 		limit := 0
 		offset := 0
 
+		mux.RLock()
 		if r.URL.Query()["limit"] != nil {
 			l, err := strconv.Atoi(r.URL.Query()["limit"][0])
 				if err != nil {log.Fatalln(err)}
@@ -196,16 +206,16 @@ func main() {
 			} else {
 				limit = len(HistoryIndex)
 			}
-			//fmt.Println(limit)
+			//log.Println(limit)
 		} else {
 			limit = len(HistoryIndex)
 		}
 
 		if r.URL.Query()["offset"] != nil {
-			o, err := strconv.Atoi(r.URL.Query()["offset"][0])
+			ofs, err := strconv.Atoi(r.URL.Query()["offset"][0])
 				if err != nil {log.Fatalln(err)}
-			offset = o
-			fmt.Println(offset)
+			offset = ofs
+			log.Println("Offset set to value: ", offset)
 		}
 
 		if  offset > len(HistoryIndex){
@@ -231,14 +241,14 @@ func main() {
 			}
 
 		}
-
+		mux.RUnlock()
 
 		jsonHistoryNice, err := json.MarshalIndent(historyRange, "", "\t")
 		if err != nil {
 			log.Fatalln(err)
 		}
-		//fmt.Print(string(jsonHistory))
-		//fmt.Print(string(jsonHistoryNice))
+		//log.Print(string(jsonHistory))
+		//log.Print(string(jsonHistoryNice))
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
@@ -250,10 +260,12 @@ func main() {
 
 	http.HandleFunc("/index", func(w http.ResponseWriter, r *http.Request){
 
+		mux.RLock()
 		jsonHistoryIndex, err := json.MarshalIndent(HistoryIndex, "", "\t")
 		if err != nil {
 			log.Fatalln(err)
 		}
+		mux.RUnlock()
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
@@ -264,7 +276,7 @@ func main() {
 	})
 
 
-	fmt.Printf("Starting server at port 8080\n")
+	log.Printf("Starting server at port 8080\n")
 
 	if err := http.ListenAndServe(":8080", nil); err != nil {
 		log.Fatal(err)
