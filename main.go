@@ -66,20 +66,16 @@ func main() {
 			mux.Lock()
 			delete(History, deleteIdInt32)
 			mux.Unlock()
-
-
-			// can improve speed here based on "half divide method if use Time of recording as a reference"
-
-			for index, element := range HistoryIndex {
-				if element.ID == deleteIdInt32 {
-					mux.Lock()
-					HistoryIndex[index].Status = "DELETED: " + time.Now().Format("2006-01-02 15:04:05.000")
-					mux.Unlock()
-					//HistoryIndex = RemoveIndex(HistoryIndex, index)
-					//log.Print("Current Index array is: ", HistoryIndex)
-					break
+			
+			mux.Lock()
+			for i:=0; i < len(HistoryIndex); i++{
+				if HistoryIndex[i].ID == deleteIdInt32{
+					HistoryIndex[i].Status = "DELETED: " + time.Now().Format("2006-01-02 15:04:05.000")
 				}
+				break
 			}
+			mux.Unlock()
+
 		case "POST":
 			reqParams := Request{} //initiate an object to store POST JSON data
 			err := json.NewDecoder(r.Body).Decode(&reqParams)
