@@ -6,7 +6,6 @@ import (
 	"log"
 	"net/http"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -19,7 +18,7 @@ type Request struct {
 }
 
 type Respond struct {
-	HttpStatus    string
+	HttpStatusCode    int
 	Header        http.Header
 	ContentLength int
 }
@@ -32,13 +31,8 @@ type HistoryElement struct {
 type HistoryIndexElement struct {
 	ID int32 //key of element in map storage
 	Time string //time when added in DB
-	Status string // tag if removed from history
+	Status   int // 1: DELETED (removed from history)
 }
-/*
-func RemoveIndex(s []HistoryIndexElement, index int) []HistoryIndexElement {
-	return append(s[:index], s[index+1:]...)
-}
- */
 
 
 func main() {
@@ -54,25 +48,23 @@ func main() {
 
 		switch r.Method{
 		case "DELETE":
-			deleteIdString := r.URL.Query().Get("id")
-			log.Println("Delete operation requested for ID: ", deleteIdString)
-			deleteIdInt64, err := strconv.ParseInt(deleteIdString, 10, 32)
+			deleteIdRaw := r.URL.Query().Get("id")
+			log.Println("Delete operation requested for ID: ", deleteIdRaw)
+			deleteId, err := strconv.ParseInt(deleteIdRaw, 10, 32)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
-			deleteIdInt32 := int32(deleteIdInt64)
 
 			mux.Lock()
-			delete(History, deleteIdInt32)
-			mux.Unlock()
-			
-			mux.Lock()
+			delete(History, int32(deleteId))
+
 			for i:=0; i < len(HistoryIndex); i++{
-				if HistoryIndex[i].ID == deleteIdInt32{
-					HistoryIndex[i].Status = "DELETED: " + time.Now().Format("2006-01-02 15:04:05.000")
+				if HistoryIndex[i].ID == int32(deleteId) {
+					//HistoryIndex[i].Status = "DELETED: " + time.Now().Format("2006-01-02 15:04:05.000")
+					HistoryIndex[i].Status = 1
+					break
 				}
-				break
 			}
 			mux.Unlock()
 
@@ -100,18 +92,7 @@ func main() {
 					err := resp.Body.Close()
 					if err != nil {
 						log.Fatal(err)
-					}
-				}()
-			case "HEAD":
-				resp, err = http.Head(reqParams.Url)
-				if err != nil {
-					http.Error(w, err.Error(), http.StatusBadRequest)
-					return
-				}
-				defer func() {
-					err := resp.Body.Close()
-					if err != nil {
-						log.Fatal(err)
+
 					}
 				}()
 				/* Under development POST request
@@ -129,10 +110,7 @@ func main() {
 				}()
 				 */
 			default:
-				_,err = w.Write([]byte("unknown request type"))
-				if err != nil {
-					log.Println(err)
-				}
+				http.Error(w, "HTTP method not in list of supported: GET , POST", http.StatusBadRequest)
 				return
 			}
 
@@ -140,15 +118,19 @@ func main() {
 			body, err := ioutil.ReadAll(resp.Body)
 			if err != nil {
 				log.Println(err)
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+
 			}
 			ContentLength := len(body)
 
 
 			res := Respond{
-				HttpStatus :   resp.Status,
+				HttpStatusCode :   resp.StatusCode,
 				Header :       resp.Header,
 				ContentLength: ContentLength,
 			}
+
 
 			historyElement := HistoryElement{
 				Request : reqParams,
@@ -162,11 +144,8 @@ func main() {
 			mux.Unlock()
 
 			// add request to History Index
-			var IndexElem HistoryIndexElement
-			IndexElem.ID = x
-			IndexElem.Time = time.Now().Format("2006-01-02 15:04:05.000")
 			mux.Lock()
-			HistoryIndex = append(HistoryIndex, IndexElem)
+			HistoryIndex = append(HistoryIndex, HistoryIndexElement{ID : x, Time : time.Now().Format("2006-01-02 15:04:05.000")})
 			mux.Unlock()
 			//log.Print(HistoryIndex, "\n")
 			//log.Println("Element added with ID: ", x)
@@ -174,12 +153,18 @@ func main() {
 
 			resJsonNice, err := json.MarshalIndent(res, "", "\t")
 			if err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}  else {
+				_, err = w.Write(resJsonNice)
+				if err != nil {
+					log.Println(err)
+				}
 			}
-			_, err = w.Write(resJsonNice)
-			if err != nil {
-				log.Println(err)
-			}
+
+		default:
+			http.Error(w, "HTTP method not in list of supported: DELETE , POST", http.StatusBadRequest)
+			return
 		}
 
 
@@ -193,23 +178,9 @@ func main() {
 		limit := 0
 		offset := 0
 
-		mux.RLock()
-		if r.URL.Query()["limit"] != nil {
-			l, err := strconv.Atoi(r.URL.Query()["limit"][0])
-				if err != nil {log.Fatalln(err)}
-			if l < len(HistoryIndex){
-				limit = l
-			} else {
-				limit = len(HistoryIndex)
-			}
-			//log.Println(limit)
-		} else {
-			limit = len(HistoryIndex)
-		}
-
 		if r.URL.Query()["offset"] != nil {
 			ofs, err := strconv.Atoi(r.URL.Query()["offset"][0])
-				if err != nil {log.Fatalln(err)}
+			if err != nil {log.Fatalln(err)}
 			offset = ofs
 			log.Println("Offset set to value: ", offset)
 		}
@@ -218,6 +189,22 @@ func main() {
 			offset = len(HistoryIndex)
 		}
 
+		mux.RLock()
+		if r.URL.Query()["limit"] != nil {
+			l, err := strconv.Atoi(r.URL.Query()["limit"][0])
+				if err != nil {log.Fatalln(err)}
+			if l + offset < len(HistoryIndex){
+				limit = l + offset
+			} else {
+				limit = len(HistoryIndex)
+			}
+			//log.Println(limit)
+		} else {
+			limit = len(HistoryIndex)
+		}
+
+
+
 		type historyRangeElement struct{
 			ID string
 			Element HistoryElement
@@ -225,15 +212,10 @@ func main() {
 		historyRange := make([]historyRangeElement,0)
 
 		for i:=offset; i< limit; i++{
-			if  !strings.Contains(HistoryIndex[i].Status, "DELETED") {
-				var element historyRangeElement
-				element.ID = strconv.Itoa(int(HistoryIndex[i].ID))
-				element.Element = History[HistoryIndex[i].ID]
-				historyRange = append(historyRange, element)
+			if  HistoryIndex[i].Status == 1 {
+				historyRange = append(historyRange, historyRangeElement{ID : "DELETED", Element : HistoryElement{}})
 			} else {
-				var element historyRangeElement
-				element.ID = HistoryIndex[i].Status
-				historyRange = append(historyRange, element)
+				historyRange = append(historyRange, historyRangeElement{ID: strconv.Itoa(int(HistoryIndex[i].ID)), Element : History[HistoryIndex[i].ID]})
 			}
 
 		}
@@ -246,8 +228,6 @@ func main() {
 		//log.Print(string(jsonHistory))
 		//log.Print(string(jsonHistoryNice))
 
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
 		_,err = w.Write(jsonHistoryNice)
 		if err != nil {
 			log.Println(err)
