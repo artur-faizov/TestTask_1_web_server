@@ -2,10 +2,11 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -17,9 +18,9 @@ type Request struct {
 }
 
 type Respond struct {
-	HttpStatus  string
-	Header http.Header
-	RespLen int64
+	HttpStatusCode    int
+	Header        http.Header
+	ContentLength int
 }
 
 type HistoryElement struct {
@@ -27,13 +28,10 @@ type HistoryElement struct {
 	Respond Respond
 }
 
-type HistoryElementInArray struct {
+type HistoryIndexElement struct {
 	ID int32 //key of element in map storage
 	Time string //time when added in DB
-}
-
-func RemoveIndex(s []HistoryElementInArray, index int) []HistoryElementInArray {
-	return append(s[:index], s[index+1:]...)
+	Status   int // 1: DELETED (removed from history)
 }
 
 
@@ -42,96 +40,131 @@ func main() {
 	var lastID int32
 
 	History := make(map[int32]HistoryElement)
-	History_array := make([]HistoryElementInArray, 0)
+	HistoryIndex := make([]HistoryIndexElement, 0)
+
+	mux := &sync.RWMutex{}
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request){
 
-		fmt.Println(r.Method)
-		if r.Method == "DELETE" {
-			fmt.Println("Delete operation requested")
-			deleteID_string := r.URL.Query().Get("id")
-			deleteID_int64, err3 := strconv.ParseInt(deleteID_string, 10, 32)
-			if err3 != nil {
-				http.Error(w, err3.Error(), http.StatusBadRequest)
+		switch r.Method{
+		case "DELETE":
+			deleteIdRaw := r.URL.Query().Get("id")
+			log.Println("Delete operation requested for ID: ", deleteIdRaw)
+			deleteId, err := strconv.ParseInt(deleteIdRaw, 10, 32)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
 
-			//fmt.Println(deleteID_int32)
-			deleteID_int32 := int32(deleteID_int64)
-			delete(History, deleteID_int32)
+			mux.Lock()
+			delete(History, int32(deleteId))
 
-			for index, element := range History_array {
-				if element.ID == deleteID_int32{
-					History_array = RemoveIndex(History_array, index)
-					fmt.Println("removed ID from index array: ", index)
-					fmt.Print("Current Index array is: ", History_array)
+			for i:=0; i < len(HistoryIndex); i++{
+				if HistoryIndex[i].ID == int32(deleteId) {
+					//HistoryIndex[i].Status = "DELETED: " + time.Now().Format("2006-01-02 15:04:05.000")
+					HistoryIndex[i].Status = 1
 					break
 				}
 			}
+			mux.Unlock()
 
-
-
-		} else if r.Method == "POST"{
-			reqParams := Request{}
-			err1 := json.NewDecoder(r.Body).Decode(&reqParams)
-			if err1 != nil {
-				http.Error(w, err1.Error(), http.StatusBadRequest)
+		case "POST":
+			reqParams := Request{} //initiate an object to store POST JSON data
+			err := json.NewDecoder(r.Body).Decode(&reqParams)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
-			//Print details about request to do
-			fmt.Printf( "Req Params: %+v\n", reqParams)
+			//Log details about request to do
+			log.Printf( "Got Request: method: %s url: %s\n", reqParams.Method, reqParams.Url)
 
-			//Json to text
-			/*
-				reqParamsString, err2 := json.Marshal(reqParams)
-				if err2 != nil {
-					http.Error(w, err2.Error(), http.StatusBadRequest)
+			//Executing request to 3rd party service
+			var resp *http.Response
+
+			switch reqParams.Method{
+			case "GET":
+				resp, err = http.Get(reqParams.Url)
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
 					return
 				}
+				defer func() {
+					err := resp.Body.Close()
+					if err != nil {
+						log.Fatal(err)
 
-				//w.Write(reqParamsString)
-				fmt.Print("Req Params: ", reqParamsString, "\n")
-			*/
-			resp, err2 := http.Get(reqParams.Url)
-			if err2 != nil {
-				log.Fatalln(err2)
-			}
-			defer resp.Body.Close()
-
-			var res Respond
-			res.HttpStatus = resp.Status
-			res.Header = resp.Header
-			res.RespLen = resp.ContentLength
-			//fmt.Print("ResLength: ", res.RespLen, "\n")
-			// length always -1
-			// https://stackoverflow.com/questions/49112440/unexpected-http-net-response-content-length-in-golang
-			/*
-				for key, element := range res.Header {
-					fmt.Println("Header Name: ", key,": ", element)
+					}
+				}()
+				/* Under development POST request
+			case "POST":
+				resp, err = http.Head(reqParams.Url)
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
 				}
-			*/
+				defer func() {
+					err := resp.Body.Close()
+					if err != nil {
+						log.Fatal(err)
+					}
+				}()
+				 */
+			default:
+				http.Error(w, "HTTP method not in list of supported: GET , POST", http.StatusBadRequest)
+				return
+			}
 
-			var helement HistoryElement
-			helement.Request = reqParams
-			helement.Respond = res
+			//Counting ContentLength
+			body, err := ioutil.ReadAll(resp.Body)
+			if err != nil {
+				log.Println(err)
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
 
+			}
+			ContentLength := len(body)
+
+
+			res := Respond{
+				HttpStatusCode :   resp.StatusCode,
+				Header :       resp.Header,
+				ContentLength: ContentLength,
+			}
+
+
+			historyElement := HistoryElement{
+				Request : reqParams,
+				Respond : res,
+			}
+
+			// add request result to History of requests
 			x := atomic.AddInt32(&lastID, 1)
-			History[x] = helement
+			mux.Lock()
+			History[x] = historyElement
+			mux.Unlock()
 
-			var his_arr_elem HistoryElementInArray
-			his_arr_elem.ID = x
-			his_arr_elem.Time = time.Now().Format("2006-01-02 15:04:05.000")
-			//fmt.Print(his_arr_elem.Time, "\n")
-			History_array = append(History_array, his_arr_elem)
-			fmt.Print(History_array, "\n")
+			// add request to History Index
+			mux.Lock()
+			HistoryIndex = append(HistoryIndex, HistoryIndexElement{ID : x, Time : time.Now().Format("2006-01-02 15:04:05.000")})
+			mux.Unlock()
+			//log.Print(HistoryIndex, "\n")
+			//log.Println("Element added with ID: ", x)
+			//log.Println("Map length: ", len(History))
 
-			fmt.Println("Element added with ID: ", x)
-			fmt.Println("Map length: ", len(History))
+			resJsonNice, err := json.MarshalIndent(res, "", "\t")
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}  else {
+				_, err = w.Write(resJsonNice)
+				if err != nil {
+					log.Println(err)
+				}
+			}
 
-
-
-			//fmt.Print(res)
-			//w.Write()
+		default:
+			http.Error(w, "HTTP method not in list of supported: DELETE , POST", http.StatusBadRequest)
+			return
 		}
 
 
@@ -139,31 +172,87 @@ func main() {
 
 	http.HandleFunc("/history", func(w http.ResponseWriter, r *http.Request){
 		//?limit=50&offset=0
-		for key, element := range History {
-			fmt.Println("Map key: ", key,": Request: ", element.Request.Method, " ", element.Request.Url)
+
+		//keys, ok := r.URL.Query()["key"]
+		//log.Print(r.URL.Query(), "\n")
+		limit := 0
+		offset := 0
+
+		if r.URL.Query()["offset"] != nil {
+			ofs, err := strconv.Atoi(r.URL.Query()["offset"][0])
+			if err != nil {log.Fatalln(err)}
+			offset = ofs
+			log.Println("Offset set to value: ", offset)
 		}
-		/*
-		jsonHistory, err := json.Marshal(History)
+
+		if  offset > len(HistoryIndex){
+			offset = len(HistoryIndex)
+		}
+
+		mux.RLock()
+		if r.URL.Query()["limit"] != nil {
+			l, err := strconv.Atoi(r.URL.Query()["limit"][0])
+				if err != nil {log.Fatalln(err)}
+			if l + offset < len(HistoryIndex){
+				limit = l + offset
+			} else {
+				limit = len(HistoryIndex)
+			}
+			//log.Println(limit)
+		} else {
+			limit = len(HistoryIndex)
+		}
+
+
+
+		type historyRangeElement struct{
+			ID string
+			Element HistoryElement
+		}
+		historyRange := make([]historyRangeElement,0)
+
+		for i:=offset; i< limit; i++{
+			if  HistoryIndex[i].Status == 1 {
+				historyRange = append(historyRange, historyRangeElement{ID : "DELETED", Element : HistoryElement{}})
+			} else {
+				historyRange = append(historyRange, historyRangeElement{ID: strconv.Itoa(int(HistoryIndex[i].ID)), Element : History[HistoryIndex[i].ID]})
+			}
+
+		}
+		mux.RUnlock()
+
+		jsonHistoryNice, err := json.MarshalIndent(historyRange, "", "\t")
 		if err != nil {
 			log.Fatalln(err)
 		}
+		//log.Print(string(jsonHistory))
+		//log.Print(string(jsonHistoryNice))
 
-		 */
-		jsonHistoryNice, err2 := json.MarshalIndent(History, "", "\t")
-		if err2 != nil {
-			log.Fatalln(err2)
+		_,err = w.Write(jsonHistoryNice)
+		if err != nil {
+			log.Println(err)
 		}
-		//fmt.Print(string(jsonHistory))
-		//fmt.Print(string(jsonHistoryNice))
+	})
+
+	http.HandleFunc("/index", func(w http.ResponseWriter, r *http.Request){
+
+		mux.RLock()
+		jsonHistoryIndex, err := json.MarshalIndent(HistoryIndex, "", "\t")
+		if err != nil {
+			log.Fatalln(err)
+		}
+		mux.RUnlock()
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		w.Write(jsonHistoryNice)
+		_,err = w.Write(jsonHistoryIndex)
+		if err != nil {
+			log.Println(err)
+		}
 	})
 
 
-
-	fmt.Printf("Starting server at port 8080\n")
+	log.Printf("Starting server at port 8080\n")
 
 	if err := http.ListenAndServe(":8080", nil); err != nil {
 		log.Fatal(err)
