@@ -25,12 +25,7 @@ type Respond struct {
 type HistoryElement struct {
 	Request Request
 	Respond Respond
-}
-
-type HistoryIndexElement struct {
-	ID     int32  //key of element in map storage
-	Time   string //time when added in DB
-	Status int    // 1: DELETED (removed from history)
+	Time    time.Time
 }
 
 func main() {
@@ -38,7 +33,6 @@ func main() {
 	var lastID int32
 
 	History := make(map[int32]HistoryElement)
-	HistoryIndex := make([]HistoryIndexElement, 0)
 
 	mux := &sync.RWMutex{}
 
@@ -56,14 +50,6 @@ func main() {
 
 			mux.Lock()
 			delete(History, int32(deleteId))
-
-			for i := 0; i < len(HistoryIndex); i++ {
-				if HistoryIndex[i].ID == int32(deleteId) {
-					//HistoryIndex[i].Status = "DELETED: " + time.Now().Format("2006-01-02 15:04:05.000")
-					HistoryIndex[i].Status = 1
-					break
-				}
-			}
 			mux.Unlock()
 
 		case "POST":
@@ -131,6 +117,7 @@ func main() {
 			historyElement := HistoryElement{
 				Request: reqParams,
 				Respond: res,
+				Time:    time.Now(),
 			}
 
 			// add request result to History of requests
@@ -138,14 +125,6 @@ func main() {
 			mux.Lock()
 			History[x] = historyElement
 			mux.Unlock()
-
-			// add request to History Index
-			mux.Lock()
-			HistoryIndex = append(HistoryIndex, HistoryIndexElement{ID: x, Time: time.Now().Format("2006-01-02 15:04:05.000")})
-			mux.Unlock()
-			//log.Print(HistoryIndex, "\n")
-			//log.Println("Element added with ID: ", x)
-			//log.Println("Map length: ", len(History))
 
 			resJsonNice, err := json.MarshalIndent(res, "", "\t")
 			if err != nil {
@@ -166,10 +145,28 @@ func main() {
 	})
 
 	http.HandleFunc("/history", func(w http.ResponseWriter, r *http.Request) {
-		//?limit=50&offset=0
 
-		//keys, ok := r.URL.Query()["key"]
-		//log.Print(r.URL.Query(), "\n")
+		//converting map to slice
+		type historyCopyElement struct {
+			ID      int32
+			Element HistoryElement
+		}
+		historyCopy := make([]historyCopyElement, 0)
+
+		mux.Lock()
+		for key, element := range History {
+			historyCopy = append(historyCopy, historyCopyElement{ID: key, Element: element})
+		}
+		mux.Unlock()
+
+		for it := 0; it < len(historyCopy); it++ {
+			for i := 0; i < (len(historyCopy) - it - 1); i++ {
+				if historyCopy[i].Element.Time.After(historyCopy[i+1].Element.Time) {
+					historyCopy[i], historyCopy[i+1] = historyCopy[i+1], historyCopy[i]
+				}
+			}
+		}
+
 		limit := 0
 		offset := 0
 
@@ -182,43 +179,31 @@ func main() {
 			log.Println("Offset set to value: ", offset)
 		}
 
-		if offset > len(HistoryIndex) {
-			offset = len(HistoryIndex)
+		if offset > len(historyCopy) {
+			offset = len(historyCopy)
 		}
 
-		mux.RLock()
 		if r.URL.Query()["limit"] != nil {
 			l, err := strconv.Atoi(r.URL.Query()["limit"][0])
 			if err != nil {
 				log.Fatalln(err)
 			}
-			if l+offset < len(HistoryIndex) {
+			if l+offset < len(historyCopy) {
 				limit = l + offset
 			} else {
-				limit = len(HistoryIndex)
+				limit = len(historyCopy)
 			}
 			//log.Println(limit)
 		} else {
-			limit = len(HistoryIndex)
+			limit = len(historyCopy)
 		}
 
-		type historyRangeElement struct {
-			ID      string
-			Element HistoryElement
+		historyCopyRange := make([]historyCopyElement, 0)
+		for j := offset; j < limit; j++ {
+			historyCopyRange = append(historyCopyRange, historyCopy[j])
 		}
-		historyRange := make([]historyRangeElement, 0)
 
-		for i := offset; i < limit; i++ {
-			if HistoryIndex[i].Status == 1 {
-				historyRange = append(historyRange, historyRangeElement{ID: "DELETED", Element: HistoryElement{}})
-			} else {
-				historyRange = append(historyRange, historyRangeElement{ID: strconv.Itoa(int(HistoryIndex[i].ID)), Element: History[HistoryIndex[i].ID]})
-			}
-
-		}
-		mux.RUnlock()
-
-		jsonHistoryNice, err := json.MarshalIndent(historyRange, "", "\t")
+		jsonHistoryNice, err := json.MarshalIndent(historyCopyRange, "", "\t")
 		if err != nil {
 			log.Fatalln(err)
 		}
@@ -226,23 +211,6 @@ func main() {
 		//log.Print(string(jsonHistoryNice))
 
 		_, err = w.Write(jsonHistoryNice)
-		if err != nil {
-			log.Println(err)
-		}
-	})
-
-	http.HandleFunc("/index", func(w http.ResponseWriter, r *http.Request) {
-
-		mux.RLock()
-		jsonHistoryIndex, err := json.MarshalIndent(HistoryIndex, "", "\t")
-		if err != nil {
-			log.Fatalln(err)
-		}
-		mux.RUnlock()
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		_, err = w.Write(jsonHistoryIndex)
 		if err != nil {
 			log.Println(err)
 		}
