@@ -13,10 +13,10 @@ import (
 )
 
 type Request struct {
-	Method string            `json:"method"`
-	Url    string            `json:"url"`
-	Header map[string]string `json:"header"`
-	Body   string            `json:"body"`
+	Method string              `json:"method"`
+	Url    string              `json:"url"`
+	Header map[string][]string `json:"header"`
+	Body   string              `json:"body"`
 }
 
 type Respond struct {
@@ -89,12 +89,6 @@ func main() {
 					http.Error(w, err.Error(), http.StatusBadRequest)
 					return
 				}
-				defer func() {
-					err := resp.Body.Close()
-					if err != nil {
-						log.Print(err)
-					}
-				}()
 
 			case "POST":
 				//Checking that BODY exist
@@ -110,33 +104,30 @@ func main() {
 
 				//x := "{\"method\":\"GET\",\"url\":\"http:\\/\\/mail.ru\"}"
 
-				//Checking that contentType is specified
-				if len(reqParams.Header) == 0 {
-					http.Error(w, "No headers specified for request", http.StatusBadRequest)
-					return
-				}
-
 				for key, element := range reqParams.Header {
-					req.Header.Set(key, element)
+					for _, value := range element {
+						req.Header.Add(key, value)
+					}
 				}
 
 				client := &http.Client{}
 				resp, err = client.Do(req)
 				if err != nil {
-					http.Error(w, err.Error(), http.StatusInternalServerError)
+					http.Error(w, err.Error(), http.StatusServiceUnavailable)
 					return
 				}
-				defer func() {
-					err := resp.Body.Close()
-					if err != nil {
-						log.Fatal(err)
-					}
-				}()
 
 			default:
 				http.Error(w, "HTTP method not in list of supported: GET , POST", http.StatusBadRequest)
 				return
 			}
+
+			defer func() {
+				err := resp.Body.Close()
+				if err != nil {
+					log.Fatal(err)
+				}
+			}()
 
 			//Counting ContentLength
 			body, err := ioutil.ReadAll(resp.Body)
@@ -152,13 +143,6 @@ func main() {
 				Header:         resp.Header,
 				ContentLength:  ContentLength,
 			}
-
-			defer func() {
-				err := resp.Body.Close()
-				if err != nil {
-					log.Fatal(err)
-				}
-			}()
 
 			historyElement := HistoryElement{
 				Request: reqParams,
