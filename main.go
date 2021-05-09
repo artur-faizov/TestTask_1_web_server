@@ -5,6 +5,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -27,6 +28,17 @@ type HistoryElement struct {
 	Respond Respond
 	Time    time.Time
 }
+
+type historyCopyElement struct {
+	ID      int32
+	Element HistoryElement
+}
+
+type ByTime []*historyCopyElement
+
+func (a ByTime) Len() int           { return len(a) }
+func (a ByTime) Less(i, j int) bool { return a[i].Element.Time.Before(a[j].Element.Time) }
+func (a ByTime) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 
 func main() {
 
@@ -147,25 +159,16 @@ func main() {
 	http.HandleFunc("/history", func(w http.ResponseWriter, r *http.Request) {
 
 		//converting map to slice
-		type historyCopyElement struct {
-			ID      int32
-			Element HistoryElement
-		}
-		historyCopy := make([]historyCopyElement, 0)
 
-		mux.Lock()
+		mux.RLock()
+		historyCopy := make([]*historyCopyElement, 0)
+
 		for key, element := range History {
-			historyCopy = append(historyCopy, historyCopyElement{ID: key, Element: element})
+			historyCopy = append(historyCopy, &historyCopyElement{ID: key, Element: element})
 		}
-		mux.Unlock()
+		mux.RUnlock()
 
-		for it := 0; it < len(historyCopy); it++ {
-			for i := 0; i < (len(historyCopy) - it - 1); i++ {
-				if historyCopy[i].Element.Time.After(historyCopy[i+1].Element.Time) {
-					historyCopy[i], historyCopy[i+1] = historyCopy[i+1], historyCopy[i]
-				}
-			}
-		}
+		sort.Sort(ByTime(historyCopy))
 
 		limit := 0
 		offset := 0
@@ -193,17 +196,13 @@ func main() {
 			} else {
 				limit = len(historyCopy)
 			}
-			//log.Println(limit)
 		} else {
 			limit = len(historyCopy)
 		}
 
-		historyCopyRange := make([]historyCopyElement, 0)
-		for j := offset; j < limit; j++ {
-			historyCopyRange = append(historyCopyRange, historyCopy[j])
-		}
+		historyCopy = historyCopy[offset:limit]
 
-		jsonHistoryNice, err := json.MarshalIndent(historyCopyRange, "", "\t")
+		jsonHistoryNice, err := json.MarshalIndent(historyCopy, "", "\t")
 		if err != nil {
 			log.Fatalln(err)
 		}
