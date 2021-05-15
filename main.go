@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"io/ioutil"
 	"log"
@@ -12,8 +13,10 @@ import (
 )
 
 type Request struct {
-	Method string `json:"method"`
-	Url    string `json:"url"`
+	Method string              `json:"method"`
+	Url    string              `json:"url"`
+	Header map[string][]string `json:"header"`
+	Body   string              `json:"body"`
 }
 
 type Respond struct {
@@ -86,31 +89,45 @@ func main() {
 					http.Error(w, err.Error(), http.StatusBadRequest)
 					return
 				}
-				defer func() {
-					err := resp.Body.Close()
-					if err != nil {
-						log.Fatal(err)
 
+			case "POST":
+				//Checking that BODY exist
+				if reqParams.Body == "" {
+					http.Error(w, "No BODY specified for request", http.StatusBadRequest)
+					return
+				}
+				req, err := http.NewRequest("POST", reqParams.Url, bytes.NewBuffer([]byte(reqParams.Body)))
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+
+				//x := "{\"method\":\"GET\",\"url\":\"http:\\/\\/mail.ru\"}"
+
+				for key, element := range reqParams.Header {
+					for _, value := range element {
+						req.Header.Add(key, value)
 					}
-				}()
-				/* Under development POST request
-				case "POST":
-					resp, err = http.Head(reqParams.Url)
-					if err != nil {
-						http.Error(w, err.Error(), http.StatusBadRequest)
-						return
-					}
-					defer func() {
-						err := resp.Body.Close()
-						if err != nil {
-							log.Fatal(err)
-						}
-					}()
-				*/
+				}
+
+				client := &http.Client{}
+				resp, err = client.Do(req)
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusServiceUnavailable)
+					return
+				}
+
 			default:
 				http.Error(w, "HTTP method not in list of supported: GET , POST", http.StatusBadRequest)
 				return
 			}
+
+			defer func() {
+				err := resp.Body.Close()
+				if err != nil {
+					log.Fatal(err)
+				}
+			}()
 
 			//Counting ContentLength
 			body, err := ioutil.ReadAll(resp.Body)
@@ -118,7 +135,6 @@ func main() {
 				log.Println(err)
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
-
 			}
 			ContentLength := len(body)
 
