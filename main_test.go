@@ -1,9 +1,11 @@
 package main
 
 import (
+	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -11,30 +13,25 @@ import (
 
 var lastID *int32
 
-/*
-func TestMain(m *testing.M) {
-	runTests := m.Run()
-	os.Exit(runTests)
-}
-*/
-
 func TestMyFirstTest(t *testing.T) {
 
-	r := http.Request{}
-
-	History := make(map[int32]HistoryElement)
-
-	r.Method = "POST"
-	bodyContent := "{\"method\": \"GET\", \"url\": \"http://google.com\"}"
-	r.Body = ioutil.NopCloser(strings.NewReader(bodyContent))
-
-	lastID := int32(0)
-	mux := sync.RWMutex{}
-	_, _, p := rootHandler(&r, &lastID, History, &mux)
-	log.Print(string(p))
-
-	if len(History) == 0 {
-		t.Error("Wrong answer in firs test")
+	myDB_ := myDB{
+		LastID:  int32(0),
+		History: make(map[int32]HistoryElement),
+		mux:     &sync.RWMutex{},
 	}
 
+	srv := httptest.NewServer(handlers(&myDB_))
+	defer srv.Close()
+
+	bodyContent := "{\"method\": \"GET\", \"url\": \"http://google.com\"}"
+	res, err := http.Post(fmt.Sprintf("%s/", srv.URL), "application/json", ioutil.NopCloser(strings.NewReader(bodyContent)))
+
+	if err != nil {
+		log.Print(err)
+	}
+
+	if res.StatusCode != http.StatusOK {
+		t.Errorf("status not OK")
+	}
 }
