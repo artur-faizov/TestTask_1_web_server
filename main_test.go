@@ -7,24 +7,35 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 )
 
-var lastID *int32
+type mockDB struct {
+}
+
+func (mdb mockDB) Add(HistoryElement) error {
+	return nil
+}
+
+func (mdb mockDB) GetHistory(int, int) ([]*historyCopyElement, error) {
+	return nil, nil
+}
+
+func (mdb mockDB) Delete(int32) error {
+	return nil
+}
 
 func TestMyFirstTest(t *testing.T) {
 
-	myDB_ := myDB{
-		LastID:  int32(0),
-		History: make(map[int32]HistoryElement),
-		mux:     &sync.RWMutex{},
-	}
+	db := mockDB{}
 
-	srv := httptest.NewServer(handlers(&myDB_))
+	srv := httptest.NewServer(handlers(db))
 	defer srv.Close()
 
-	bodyContent := "{\"method\": \"GET\", \"url\": \"http://google.com\"}"
+	bodyContent := `{
+		"method": "GET", 
+		"url": "http://google.com"
+	}`
 	res, err := http.Post(fmt.Sprintf("%s/", srv.URL), "application/json", ioutil.NopCloser(strings.NewReader(bodyContent)))
 
 	if err != nil {
