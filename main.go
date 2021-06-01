@@ -51,15 +51,7 @@ type myDB struct {
 }
 
 func (db myDB) Add(newHistoryElement HistoryElement) error {
-
-	//log.Print("Current Index value is: ", db.lastID)
-	//log.Print("Element is:", newHistoryElement.Request.Url)
-
-	//log.Print("Last ID value before: ", *db.lastID)
 	x := atomic.AddInt32(db.lastID, 1)
-	//log.Print("Last ID after before: ", *db.lastID)
-
-	//x := len(db.History)
 	db.mux.Lock()
 	db.History[x] = newHistoryElement
 	db.mux.Unlock()
@@ -76,7 +68,6 @@ func (db myDB) Delete(id int32) error {
 func (db myDB) GetHistory(offset, limit int) ([]*historyCopyElement, error) {
 
 	db.mux.RLock()
-
 	if offset > len(db.History) {
 		return nil, fmt.Errorf("offset %d greater than size of DB %d", offset, len(db.History))
 	}
@@ -113,11 +104,6 @@ func handlers(idb DB) http.Handler {
 				return
 			}
 
-			/*
-				db.mux.Lock()
-				delete(db.History, int32(deleteId))
-				db.mux.Unlock()
-			*/
 			err = idb.Delete(int32(deleteId))
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -157,8 +143,6 @@ func handlers(idb DB) http.Handler {
 					http.Error(w, "No BODY specified for request", http.StatusBadRequest)
 					return
 				}
-
-				//x := "{\"method\":\"GET\",\"url\":\"http:\\/\\/mail.ru\"}"
 
 				for key, element := range reqParams.Header {
 					for _, value := range element {
@@ -207,13 +191,6 @@ func handlers(idb DB) http.Handler {
 				Time:    time.Now(),
 			}
 
-			// add request result to History of requests
-			/*
-				x := atomic.AddInt32(&db.lastID, 1)
-				db.mux.Lock()
-				db.History[x] = historyElement
-				db.mux.Unlock()
-			*/
 			resJsonNice, err := json.MarshalIndent(res, "", "\t")
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -240,19 +217,6 @@ func handlers(idb DB) http.Handler {
 
 	r.HandleFunc("/history", func(w http.ResponseWriter, r *http.Request) {
 
-		//converting map to slice
-		/*
-			db.mux.RLock()
-			historyCopy := make([]*historyCopyElement, 0)
-
-			for key, element := range db.History {
-				historyCopy = append(historyCopy, &historyCopyElement{ID: key, Element: element})
-			}
-			db.mux.RUnlock()
-
-			sort.Sort(ByTime(historyCopy))
-		*/
-
 		limit := 0
 		offset := 0
 
@@ -265,12 +229,6 @@ func handlers(idb DB) http.Handler {
 			log.Println("Offset set to value: ", offset)
 		}
 
-		/*
-			if offset > len(historyCopy) {
-				offset = len(historyCopy)
-			}
-		*/
-
 		if r.URL.Query()["limit"] != nil {
 			l, err := strconv.Atoi(r.URL.Query()["limit"][0])
 			if err != nil {
@@ -279,18 +237,12 @@ func handlers(idb DB) http.Handler {
 			limit = l
 		}
 
-		/*
-			historyCopy = historyCopy[offset:limit]
-		*/
-
 		historyCopy, err := idb.GetHistory(offset, limit)
 
 		jsonHistoryNice, err := json.MarshalIndent(historyCopy, "", "\t")
 		if err != nil {
 			log.Fatalln(err)
 		}
-		//log.Print(string(jsonHistory))
-		//log.Print(string(jsonHistoryNice))
 
 		_, err = w.Write(jsonHistoryNice)
 		if err != nil {
