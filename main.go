@@ -3,14 +3,11 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
-	"sort"
 	"strconv"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -36,59 +33,6 @@ type HistoryElement struct {
 type historyCopyElement struct {
 	ID      int32
 	Element HistoryElement
-}
-
-type ByTime []*historyCopyElement
-
-func (a ByTime) Len() int           { return len(a) }
-func (a ByTime) Less(i, j int) bool { return a[i].Element.Time.Before(a[j].Element.Time) }
-func (a ByTime) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
-
-type myDB struct {
-	lastID  *int32
-	History map[int32]HistoryElement
-	mux     *sync.RWMutex
-}
-
-func (db myDB) Add(newHistoryElement HistoryElement) error {
-	x := atomic.AddInt32(db.lastID, 1)
-	db.mux.Lock()
-	db.History[x] = newHistoryElement
-	db.mux.Unlock()
-	return nil
-}
-
-func (db myDB) Delete(id int32) error {
-	db.mux.Lock()
-	delete(db.History, id)
-	db.mux.Unlock()
-	return nil
-}
-
-func (db myDB) GetHistory(offset, limit int) ([]*historyCopyElement, error) {
-
-	db.mux.RLock()
-	if offset > len(db.History) {
-		return nil, fmt.Errorf("offset %d greater than size of DB %d", offset, len(db.History))
-	}
-
-	historyCopy := make([]*historyCopyElement, 0)
-
-	for key, element := range db.History {
-		historyCopy = append(historyCopy, &historyCopyElement{ID: key, Element: element})
-	}
-	db.mux.RUnlock()
-
-	from := offset
-	to := len(historyCopy)
-	if limit != 0 && limit+offset < to {
-		to = offset + limit
-	}
-
-	sort.Sort(ByTime(historyCopy))
-
-	historyCopy = historyCopy[from:to]
-	return historyCopy, nil
 }
 
 func handlers(idb DB) http.Handler {
@@ -238,6 +182,10 @@ func handlers(idb DB) http.Handler {
 		}
 
 		historyCopy, err := idb.GetHistory(offset, limit)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 
 		jsonHistoryNice, err := json.MarshalIndent(historyCopy, "", "\t")
 		if err != nil {
