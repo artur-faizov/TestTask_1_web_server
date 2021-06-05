@@ -7,7 +7,6 @@ import (
 	"log"
 	"net/http"
 	"strconv"
-	"sync"
 	"time"
 )
 
@@ -203,17 +202,11 @@ func handlers(idb DB) http.Handler {
 
 func main() {
 
-	id := int32(0)
-
-	idb := &myDB{
-		lastID:  &id,
-		History: make(map[int32]HistoryElement),
-		mux:     &sync.RWMutex{},
-	}
+	mapDB := NewMapDB()
 
 	log.Printf("Starting server at port 8080\n")
 
-	if err := http.ListenAndServe(":8080", handlers(idb)); err != nil {
+	if err := http.ListenAndServe(":8080", handlers(mapDB)); err != nil {
 		log.Fatal(err)
 	}
 }

@@ -7,21 +7,29 @@ import (
 	"sync/atomic"
 )
 
-type myDB struct {
-	lastID  *int32
+type MapDB struct {
+	lastID  int32
 	History map[int32]HistoryElement
 	mux     *sync.RWMutex
 }
 
-func (db myDB) Add(newHistoryElement HistoryElement) error {
-	x := atomic.AddInt32(db.lastID, 1)
+func NewMapDB() *MapDB {
+	return &MapDB{
+		lastID:  int32(0),
+		History: make(map[int32]HistoryElement),
+		mux:     &sync.RWMutex{},
+	}
+}
+
+func (db *MapDB) Add(newHistoryElement HistoryElement) error {
+	x := atomic.AddInt32(&db.lastID, 1)
 	db.mux.Lock()
 	db.History[x] = newHistoryElement
 	db.mux.Unlock()
 	return nil
 }
 
-func (db myDB) Delete(id int32) error {
+func (db *MapDB) Delete(id int32) error {
 	db.mux.Lock()
 	delete(db.History, id)
 	db.mux.Unlock()
@@ -34,7 +42,7 @@ func (a ByTime) Len() int           { return len(a) }
 func (a ByTime) Less(i, j int) bool { return a[i].Element.Time.Before(a[j].Element.Time) }
 func (a ByTime) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 
-func (db myDB) GetHistory(offset, limit int) ([]*historyCopyElement, error) {
+func (db *MapDB) GetHistory(offset, limit int) ([]*historyCopyElement, error) {
 
 	if offset > len(db.History) {
 		return nil, fmt.Errorf("offset %d greater than size of DB %d", offset, len(db.History))
