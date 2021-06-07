@@ -49,8 +49,8 @@ func TestAdd(t *testing.T) {
 		require.Nil(t, err)
 		require.Len(t, testDB.History, 1)
 
-		for key, _ := range testDB.History {
-			require.Equal(t, http.StatusOK, testDB.History[key].Respond.HttpStatusCode, "Data is corrupted in DB")
+		for _, value := range testDB.History {
+			require.Equal(t, http.StatusOK, value.Respond.HttpStatusCode, "Data is corrupted in DB")
 		}
 	})
 	t.Run("Test: Adding multiple elements to DB", func(t *testing.T) {
@@ -58,7 +58,7 @@ func TestAdd(t *testing.T) {
 		N := 101
 		addNTestElements(t, testDB, testHistoryElement, N)
 
-		require.Len(t, testDB.History, N+1, "incorrect size of DB with 3 lements. Expected: 3, in facet size is: %d", len(testDB.History))
+		require.Len(t, testDB.History, N+1, "incorrect size of DB. Expected: %d, in facet size is: %d", N+1, len(testDB.History))
 
 		for key, _ := range testDB.History {
 			require.Condition(t, func() bool {
@@ -153,20 +153,23 @@ func TestGetHistory(t *testing.T) {
 		if reportedHistory[0].Element.Request.Url != `"http://google2.com"` && len(reportedHistory) != 1 {
 			t.Error(`Wrong reported offset and limit, expected: "http://google2.com" but got: `, reportedHistory[0].Element.Request.Url)
 		}
+	})
 
-		//testing incorrect too big limit
-		reportedHistory, err = testDB.GetHistory(101, 1000)
+	t.Run("TestGetHistory: testing incorrect too big limit", func(t *testing.T) {
+		reportedHistory, err := testDB.GetHistory(101, 1000)
 		if err != nil {
 			t.Error("Error: error in get history")
 		}
 		if reportedHistory[0].Element.Request.Url != `"http://google3.com"` && len(reportedHistory) != 1 {
 			t.Error(`Error when too big limit `)
 		}
+	})
 
-		//testing incorrect too big offset
-		reportedHistory, err = testDB.GetHistory(200, 100)
+	t.Run("TestGetHistory: testing incorrect too big offset", func(t *testing.T) {
+		reportedHistory, err := testDB.GetHistory(200, 100)
 		if err == nil || reportedHistory != nil {
 			t.Error("Error when too big offset")
 		}
 	})
+
 }

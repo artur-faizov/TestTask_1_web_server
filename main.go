@@ -83,7 +83,7 @@ func handlers(idb DB) http.Handler {
 				}
 				req, err := http.NewRequest("POST", reqParams.Url, bytes.NewBuffer([]byte(reqParams.Body)))
 				if err != nil {
-					http.Error(w, "No BODY specified for request", http.StatusBadRequest)
+					http.Error(w, err.Error(), http.StatusInternalServerError)
 					return
 				}
 
