@@ -6,10 +6,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
-	"sort"
 	"strconv"
-	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -37,22 +34,9 @@ type historyCopyElement struct {
 	Element HistoryElement
 }
 
-type ByTime []*historyCopyElement
-
-func (a ByTime) Len() int           { return len(a) }
-func (a ByTime) Less(i, j int) bool { return a[i].Element.Time.Before(a[j].Element.Time) }
-func (a ByTime) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
-
-func main() {
-
-	var lastID int32
-
-	History := make(map[int32]HistoryElement)
-
-	mux := &sync.RWMutex{}
-
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-
+func handlers(idb DB) http.Handler {
+	r := http.NewServeMux()
+	r.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case "DELETE":
 			deleteIdRaw := r.URL.Query().Get("id")
@@ -63,9 +47,11 @@ func main() {
 				return
 			}
 
-			mux.Lock()
-			delete(History, int32(deleteId))
-			mux.Unlock()
+			err = idb.Delete(int32(deleteId))
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
 
 		case "POST":
 			reqParams := Request{} //initiate an object to store POST JSON data
@@ -74,6 +60,7 @@ func main() {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
+
 			//Log details about request to do
 			log.Printf("Got Request: method: %s url: %s\n", reqParams.Method, reqParams.Url)
 
@@ -99,8 +86,6 @@ func main() {
 					http.Error(w, err.Error(), http.StatusInternalServerError)
 					return
 				}
-
-				//x := "{\"method\":\"GET\",\"url\":\"http:\\/\\/mail.ru\"}"
 
 				for key, element := range reqParams.Header {
 					for _, value := range element {
@@ -134,6 +119,7 @@ func main() {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
+
 			ContentLength := len(body)
 
 			res := Respond{
@@ -148,12 +134,6 @@ func main() {
 				Time:    time.Now(),
 			}
 
-			// add request result to History of requests
-			x := atomic.AddInt32(&lastID, 1)
-			mux.Lock()
-			History[x] = historyElement
-			mux.Unlock()
-
 			resJsonNice, err := json.MarshalIndent(res, "", "\t")
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -165,6 +145,12 @@ func main() {
 				}
 			}
 
+			err = idb.Add(historyElement)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+
 		default:
 			http.Error(w, "HTTP method not in list of supported: DELETE , POST", http.StatusBadRequest)
 			return
@@ -172,19 +158,7 @@ func main() {
 
 	})
 
-	http.HandleFunc("/history", func(w http.ResponseWriter, r *http.Request) {
-
-		//converting map to slice
-
-		mux.RLock()
-		historyCopy := make([]*historyCopyElement, 0)
-
-		for key, element := range History {
-			historyCopy = append(historyCopy, &historyCopyElement{ID: key, Element: element})
-		}
-		mux.RUnlock()
-
-		sort.Sort(ByTime(historyCopy))
+	r.HandleFunc("/history", func(w http.ResponseWriter, r *http.Request) {
 
 		limit := 0
 		offset := 0
@@ -198,32 +172,24 @@ func main() {
 			log.Println("Offset set to value: ", offset)
 		}
 
-		if offset > len(historyCopy) {
-			offset = len(historyCopy)
-		}
-
 		if r.URL.Query()["limit"] != nil {
 			l, err := strconv.Atoi(r.URL.Query()["limit"][0])
 			if err != nil {
 				log.Fatalln(err)
 			}
-			if l+offset < len(historyCopy) {
-				limit = l + offset
-			} else {
-				limit = len(historyCopy)
-			}
-		} else {
-			limit = len(historyCopy)
+			limit = l
 		}
 
-		historyCopy = historyCopy[offset:limit]
+		historyCopy, err := idb.GetHistory(offset, limit)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 
 		jsonHistoryNice, err := json.MarshalIndent(historyCopy, "", "\t")
 		if err != nil {
 			log.Fatalln(err)
 		}
-		//log.Print(string(jsonHistory))
-		//log.Print(string(jsonHistoryNice))
 
 		_, err = w.Write(jsonHistoryNice)
 		if err != nil {
@@ -231,9 +197,16 @@ func main() {
 		}
 	})
 
+	return r
+}
+
+func main() {
+
+	mapDB := NewMapDB()
+
 	log.Printf("Starting server at port 8080\n")
 
-	if err := http.ListenAndServe(":8080", nil); err != nil {
+	if err := http.ListenAndServe(":8080", handlers(mapDB)); err != nil {
 		log.Fatal(err)
 	}
 }
