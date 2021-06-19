@@ -1,0 +1,13 @@
+create table public."RequestHeaders"
+(
+	id integer REFERENCES "TestTable"(id) ON DELETE CASCADE,
+    headername text,
+    headervalue text
+)
+
+create table public."RespondHeaders"
+(
+	id integer REFERENCES "TestTable"(id) ON DELETE CASCADE,
+    headername text,
+    headervalue text
+)

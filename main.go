@@ -203,7 +203,7 @@ func handlers(idb DB) http.Handler {
 func main() {
 
 	//mapDB := NewMapDB()
-	pgDB, err := GetPgDB()
+	pgDB, err := NewPGDB()
 	if err != nil {
 		panic(err)
 	}
