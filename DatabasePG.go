@@ -3,8 +3,6 @@ package main
 import (
 	"database/sql"
 	"fmt"
-	"sort"
-	"time"
 
 	_ "github.com/lib/pq"
 )
@@ -14,7 +12,7 @@ const (
 	port     = 5432
 	user     = "postgres"
 	password = "000000"
-	dbname   = "TestDB"
+	dbname   = "RequestDB"
 )
 
 type PgDB struct {
@@ -47,7 +45,7 @@ func (db *PgDB) Add(newHistoryElement HistoryElement) error {
 
 	//Creating SQL request that will insert ne element id TestTable - new element is a request we processed
 	sqlInsert := `
-		INSERT INTO "TestTable" (method , url, body, time, "respStatus", length)
+		INSERT INTO "requests" (method , url, body, time, respstatus, length)
 		VALUES ($1, $2, $3, $4,$5, $6)`
 
 	//executing SQl request to add new element, and transfer data as a parameters of request
@@ -69,7 +67,7 @@ func (db *PgDB) Add(newHistoryElement HistoryElement) error {
 func (db *PgDB) Delete(id int32) error {
 	//deleting element from Test Table
 	sqlStatement1 := `
-		DELETE FROM "TestTable"
+		DELETE FROM "requests"
 		WHERE id = $1;
 		`
 	_, err := db.Database.Exec(sqlStatement1, id)
@@ -82,72 +80,42 @@ func (db *PgDB) Delete(id int32) error {
 func (db *PgDB) GetHistory(offset, limit int) ([]*historyCopyElement, error) {
 
 	historyCopy := make([]*historyCopyElement, 0)
-	//we request all data from testTable
-	requests, err := db.Database.Query(`SELECT * FROM "TestTable"`)
+
+	if limit == 0 {
+		limit = 2147483647
+	}
+	//we request required data from testTable
+	requests, err := db.Database.Query(`
+		SELECT * FROM requests 
+		ORDER by time ASC
+		LIMIT $1 OFFSET $2
+	`, limit, offset)
+
 	if err != nil {
 		return nil, err
 	}
 
 	//We go over result of our request  going line by line
-
 	for requests.Next() {
-		var id int32
-		var url string
-		var method string
-		var body string
-		var requestTime time.Time
-		var respStatus int
-		var length int
 
-		err = requests.Scan(&id, &url, &method, &body, &requestTime, &respStatus, &length)
+		elementFromTable := &historyCopyElement{}
+
+		err = requests.Scan(
+			&elementFromTable.ID,
+			&elementFromTable.Element.Request.Url,
+			&elementFromTable.Element.Request.Method,
+			&elementFromTable.Element.Request.Body,
+			&elementFromTable.Element.Time,
+			&elementFromTable.Element.Respond.HttpStatusCode,
+			&elementFromTable.Element.Respond.ContentLength,
+		)
 		if err != nil {
 			return historyCopy, err
 		}
 
-		//and convert data from each line into historyCopyElement (single element of our report)
-		request := Request{
-			Method: method,
-			Url:    url,
-			Body:   body,
-		}
-
-		respond := Respond{
-			HttpStatusCode: respStatus,
-			ContentLength:  length,
-		}
-
-		historyElement := HistoryElement{
-			Request: request,
-			Respond: respond,
-			Time:    requestTime,
-		}
-
-		historyCopyElement := historyCopyElement{
-			ID:      id,
-			Element: historyElement,
-		}
-
 		//adding each element into whole history in our format
-		historyCopy = append(historyCopy, &historyCopyElement)
+		historyCopy = append(historyCopy, elementFromTable)
 	}
-
-	//if offset bigger than size of DB we report that request with such offset does not make sense
-	if offset > len(historyCopy) {
-		return nil, fmt.Errorf("offset %d greater than size of DB %d", offset, len(historyCopy))
-	}
-
-	//we convert offset and limit into slice id's that we need to use to select required part of history
-	from := offset
-	to := len(historyCopy)
-	if limit != 0 && limit+offset < to {
-		to = offset + limit
-	}
-
-	//Sorting all elements in our history by time
-	sort.Sort(ByTime(historyCopy))
-
-	//leaving only requested part of history and send it as a result.
-	historyCopy = historyCopy[from:to]
 
 	return historyCopy, nil
 }

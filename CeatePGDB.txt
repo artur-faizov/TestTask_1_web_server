@@ -11,3 +11,13 @@ create table public."RespondHeaders"
     headername text,
     headervalue text
 )
+
+CREATE TABLE Requests (
+   id SERIAL PRIMARY KEY,
+   method text,
+   url text,
+   body text,
+   time timestamp with time zone,
+   respStatus integer,
+   length integer
+);
