@@ -1,33 +1,41 @@
 package main
 
 import (
-	"database/sql"
-	"fmt"
-	sqlextention "github.com/jmoiron/sqlx"
-	_ "github.com/lib/pq"
 	"log"
+	"time"
+
+	pg "github.com/go-pg/pg/v10"
 )
 
 const (
-	host     = "localhost"
-	port     = 5432
+	port     = ":5432"
 	user     = "postgres"
 	password = "000000"
 	dbname   = "RequestDB"
 )
 
 type PgDB struct {
-	Database *sql.DB
+	Database *pg.DB
 }
 
-func DbPgConnect() (*sql.DB, error) {
-	pgConnection := fmt.Sprintf("host=%s port=%d user=%s "+
-		"password=%s dbname=%s sslmode=disable",
-		host, port, user, password, dbname)
-	db, err := sql.Open("postgres", pgConnection)
-	if err != nil {
-		return nil, err
-	}
+type RequestInDB struct {
+	tableName struct{} `pg:"requests"`
+	Id int
+	Method string
+	Url string
+	Body string
+	Time time.Time
+	Respstatus int
+	Length int
+}
+
+func DbPgConnect() (*pg.DB, error) {
+	db := pg.Connect(&pg.Options{
+		Addr:     port,
+		User:     user,
+		Password: password,
+		Database: dbname,
+	})
 	return db, nil
 }
 
@@ -43,22 +51,17 @@ func NewPGDB() (*PgDB, error) {
 
 func (db *PgDB) Add(newHistoryElement HistoryElement) error {
 
-	//Trying to add new element in DB
+	request := RequestInDB{
+		Method: newHistoryElement.Request.Method,
+		Url: newHistoryElement.Request.Url,
+		Body: newHistoryElement.Request.Body,
+		Time: newHistoryElement.Time,
+		Respstatus: newHistoryElement.Respond.HttpStatusCode,
+		Length: newHistoryElement.Respond.ContentLength,
+	}
 
-	//Creating SQL request that will insert ne element id TestTable - new element is a request we processed
-	sqlInsert := `
-		INSERT INTO "requests" (method , url, body, time, respstatus, length)
-		VALUES ($1, $2, $3, $4,$5, $6)`
+	_, err := db.Database.Model(&request).Insert()
 
-	//executing SQl request to add new element, and transfer data as a parameters of request
-	_, err := db.Database.Exec(sqlInsert,
-		newHistoryElement.Request.Method,
-		newHistoryElement.Request.Url,
-		newHistoryElement.Request.Body,
-		newHistoryElement.Time,
-		newHistoryElement.Respond.HttpStatusCode,
-		newHistoryElement.Respond.ContentLength,
-	)
 	if err != nil {
 		return err
 	}
@@ -67,12 +70,10 @@ func (db *PgDB) Add(newHistoryElement HistoryElement) error {
 }
 
 func (db *PgDB) Delete(id int32) error {
-	//deleting element from Test Table
-	sqlStatement1 := `
-		DELETE FROM "requests"
-		WHERE id = $1;
-		`
-	_, err := db.Database.Exec(sqlStatement1, id)
+	request := RequestInDB{}
+	 _, err := db.Database.Model(&request).
+	 	Where("id = ?", id).
+	 	Delete()
 	if err != nil {
 		return err
 	}
@@ -81,67 +82,31 @@ func (db *PgDB) Delete(id int32) error {
 
 func (db *PgDB) GetHistory(offset, limit int) ([]*historyCopyElement, error) {
 
-	pgConnection := fmt.Sprintf("host=%s port=%d user=%s "+
-		"password=%s dbname=%s sslmode=disable",
-		host, port, user, password, dbname)
-	db2, err := sqlextention.Connect("postgres", pgConnection)
+	//getting data from Database
+	var requests []RequestInDB
+
+	err := db.Database.Model(&requests).
+		Order("time ASC").
+		Limit(limit).
+		Offset(offset).
+		Select()
 	if err != nil {
-		return nil, err
+		log.Print(err)
 	}
 
-	if limit == 0 {
-		limit = 2147483647
+	//transforming database struct into target struct
+	historyCopy := make([]*historyCopyElement, len(requests))
+	for i := 0; i < len(requests); i++{
+		historyCopy[i] = &historyCopyElement{}
+		historyCopy[i].ID = int32(requests[i].Id)
+		historyCopy[i].Element.Time = requests[i].Time
+		historyCopy[i].Element.Request.Url = requests[i].Url
+		historyCopy[i].Element.Request.Method = requests[i].Method
+		historyCopy[i].Element.Request.Body = requests[i].Body
+		historyCopy[i].Element.Respond.HttpStatusCode = requests[i].Respstatus
+		historyCopy[i].Element.Respond.ContentLength = requests[i].Length
 	}
 
-	// first request to count number of elements in table
-	numberOfRequests := db2.QueryRowx(`
-		Select COUNT(*) from(
-			SELECT * FROM requests 
-			ORDER by time ASC
-			LIMIT $1 OFFSET $2
-		)as listofrows
-		`, limit, offset)
-	var rowsNumber int
-	numberOfRequests.Scan(&rowsNumber)
-
-	//Creating slice for final results
-	historyCopy := make([]*historyCopyElement, rowsNumber)
-
-	// second request to get data from table
-	requests, err := db2.Queryx(`
-		SELECT * FROM requests 
-		ORDER by time ASC
-		LIMIT $1 OFFSET $2
-	`, limit, offset)
-	if err != nil {
-		return nil, err
-	}
-
-	//We go over result of our request  going line by line
-	elementNumberInSlice := 0
-	for requests.Next() {
-
-		//elementFromTable := &historyCopyElement{}
-		if elementNumberInSlice <= rowsNumber {
-			log.Println(elementNumberInSlice)
-			historyCopy[elementNumberInSlice] = &historyCopyElement{}
-			err = requests.Scan(
-				&historyCopy[elementNumberInSlice].ID,
-				&historyCopy[elementNumberInSlice].Element.Request.Url,
-				&historyCopy[elementNumberInSlice].Element.Request.Method,
-				&historyCopy[elementNumberInSlice].Element.Request.Body,
-				&historyCopy[elementNumberInSlice].Element.Time,
-				&historyCopy[elementNumberInSlice].Element.Respond.HttpStatusCode,
-				&historyCopy[elementNumberInSlice].Element.Respond.ContentLength,
-			)
-
-			if err != nil {
-				return historyCopy, err
-			}
-			elementNumberInSlice++
-		}
-
-	}
-
+	//return result
 	return historyCopy, nil
 }
