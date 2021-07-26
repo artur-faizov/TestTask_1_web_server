@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	port     = ":5432"
+	host     = ":5432"
 	user     = "postgres"
 	password = "000000"
 	dbname   = "RequestDB"
@@ -31,7 +31,7 @@ type RequestInDB struct {
 
 func DbPgConnect() (*pg.DB, error) {
 	db := pg.Connect(&pg.Options{
-		Addr:     port,
+		Addr:     host,
 		User:     user,
 		Password: password,
 		Database: dbname,
@@ -83,7 +83,7 @@ func (db *PgDB) Delete(id int32) error {
 func (db *PgDB) GetHistory(offset, limit int) ([]*historyCopyElement, error) {
 
 	//getting data from Database
-	var requests []RequestInDB
+	var requests []*RequestInDB
 
 	err := db.Database.Model(&requests).
 		Order("time ASC").
@@ -94,17 +94,29 @@ func (db *PgDB) GetHistory(offset, limit int) ([]*historyCopyElement, error) {
 		log.Print(err)
 	}
 
+	for _, element := range requests{
+		log.Print(element)
+	}
+
 	//transforming database struct into target struct
-	historyCopy := make([]*historyCopyElement, len(requests))
-	for i := 0; i < len(requests); i++{
-		historyCopy[i] = &historyCopyElement{}
-		historyCopy[i].ID = int32(requests[i].Id)
-		historyCopy[i].Element.Time = requests[i].Time
-		historyCopy[i].Element.Request.Url = requests[i].Url
-		historyCopy[i].Element.Request.Method = requests[i].Method
-		historyCopy[i].Element.Request.Body = requests[i].Body
-		historyCopy[i].Element.Respond.HttpStatusCode = requests[i].Respstatus
-		historyCopy[i].Element.Respond.ContentLength = requests[i].Length
+	historyCopy := make([]*historyCopyElement, 0, len(requests))
+	for _, req := range requests{
+		request := &historyCopyElement{
+			ID : int32(req.Id),
+			Element : HistoryElement{
+				Time : req.Time,
+				Request: Request{
+					Url: req.Url,
+					Method : req.Method,
+					Body: req.Body,
+				},
+				Respond: Respond{
+					HttpStatusCode: req.Respstatus,
+					ContentLength: req.Length,
+				},
+			} ,
+		}
+		historyCopy = append(historyCopy, request)
 	}
 
 	//return result
