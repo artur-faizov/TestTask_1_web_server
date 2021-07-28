@@ -94,9 +94,11 @@ func (db *PgDB) GetHistory(offset, limit int) ([]*historyCopyElement, error) {
 		log.Print(err)
 	}
 
+	/*
 	for _, element := range requests{
 		log.Print(element)
 	}
+	 */
 
 	//transforming database struct into target struct
 	historyCopy := make([]*historyCopyElement, 0, len(requests))
