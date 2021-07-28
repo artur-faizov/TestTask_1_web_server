@@ -1,0 +1,23 @@
+create table public."RequestHeaders"
+(
+	id integer REFERENCES "TestTable"(id) ON DELETE CASCADE,
+    headername text,
+    headervalue text
+)
+
+create table public."RespondHeaders"
+(
+	id integer REFERENCES "TestTable"(id) ON DELETE CASCADE,
+    headername text,
+    headervalue text
+)
+
+CREATE TABLE Requests (
+   id SERIAL PRIMARY KEY,
+   method text,
+   url text,
+   body text,
+   time timestamp with time zone,
+   respStatus integer,
+   length integer
+);

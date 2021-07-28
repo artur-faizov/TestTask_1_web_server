@@ -10,6 +10,12 @@ import (
 	"time"
 )
 
+type HistoryElement struct {
+	Request Request
+	Respond Respond
+	Time    time.Time
+}
+
 type Request struct {
 	Method string              `json:"method"`
 	Url    string              `json:"url"`
@@ -21,12 +27,6 @@ type Respond struct {
 	HttpStatusCode int
 	Header         http.Header
 	ContentLength  int
-}
-
-type HistoryElement struct {
-	Request Request
-	Respond Respond
-	Time    time.Time
 }
 
 type historyCopyElement struct {
@@ -202,11 +202,16 @@ func handlers(idb DB) http.Handler {
 
 func main() {
 
-	mapDB := NewMapDB()
+	//mapDB := NewMapDB()
+	pgDB, err := NewPGDB()
+	if err != nil {
+		panic(err)
+	}
+	defer pgDB.Database.Close()
 
 	log.Printf("Starting server at port 8080\n")
 
-	if err := http.ListenAndServe(":8080", handlers(mapDB)); err != nil {
+	if err := http.ListenAndServe(":8080", handlers(pgDB)); err != nil {
 		log.Fatal(err)
 	}
 }
